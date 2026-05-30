@@ -1,110 +1,93 @@
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const { writeFileSync } = require('fs'); 
+const path = require('path'); 
 
-const axios = require('axios');
+const execPromise = promisify(exec);
 
 module.exports = {
-  config: {
-    name: "update",
-    version: "1.0.0",
-    author: "Sheikh Tamim",
-    category: "admin",
-    description: "Check and update the bot to the latest version",
-    role: 1,
-    usage: "update"
-  },
+    config: {
+        name: "update",
+        version: "1.0.0",
+        author: "𝙎𝙝𝙖𝙙𝙤𝙬 𝙁𝙡𝙖𝙨𖤐⁩ / Adaptado",
+        countDown: 5,
+        role: 2, // 2 usualmente significa que SOLO el creador/owner del bot puede usarlo
+        description: "Actualiza el bot desde GitHub por completo",
+        category: "owner",
+        guide: "{pn}"
+    },
 
-  ST: async function ({ message, event, api, sock }) {
-    try {
-      const currentVersion = require('../../package.json').version;
-      
-     
-      
-      const { data: versions } = await axios.get('https://raw.githubusercontent.com/sheikhtamimlover/ST_WhatsappBot/main/version.json');
-      const latestVersion = versions[versions.length - 1].version;
-      
-      if (currentVersion === latestVersion) {
-        return message.reply(`✅ You are using ST_WhatsappBot latest version (v${currentVersion})`);
-      }
-      
-      const indexCurrentVersion = versions.findIndex(v => v.version === currentVersion);
-      const versionsNeedToUpdate = versions.slice(indexCurrentVersion + 1);
-      
-      let updateInfo = `🆕 New Version Available!\n\n`;
-      updateInfo += `📦 Current: v${currentVersion}\n`;
-      updateInfo += `📦 Latest: v${latestVersion}\n\n`;
-      updateInfo += `📋 Update Notes:\n`;
-      
-      versionsNeedToUpdate.forEach(v => {
-        updateInfo += `\n📌 v${v.version}`;
-        if (v.note) {
-          updateInfo += `\n   ${v.note}`;
-        }
-        
-        const fileCount = Object.keys(v.files || {}).length;
-        const deleteCount = Object.keys(v.deleteFiles || {}).length;
-        
-        if (fileCount > 0) {
-          updateInfo += `\n   📝 Files to update: ${fileCount}`;
-        }
-        if (deleteCount > 0) {
-          updateInfo += `\n   🗑️ Files to delete: ${deleteCount}`;
-        }
-      });
-      
-      updateInfo += `\n\n⚠️ Reply with "yes" to start the update process.`;
-      updateInfo += `\n⏱️ You have 60 seconds to confirm.`;
-      
-      const sentMsg = await message.reply(updateInfo);
-      
-      if (sentMsg && sentMsg.key) {
-        global.ST.onReply.set(sentMsg.key.id, {
-          commandName: 'update',
-          messageID: sentMsg.key.id,
-          author: event.senderID,
-          versionsToUpdate: versionsNeedToUpdate,
-          currentVersion: currentVersion,
-          latestVersion: latestVersion
-        });
-        
-        setTimeout(() => {
-          global.ST.onReply.delete(sentMsg.key.id);
-        }, 60000);
-      }
-      
-    } catch (error) {
-      console.error('Update check error:', error);
-      await message.reply(`❌ Error checking for updates: ${error.message}`);
-    }
-  },
+    onMessage: async function ({ message, args, sock }) {
+        const from = message.key.remoteJid;
 
-  onReply: async function ({ message, event, api, Reply, sock }) {
-    try {
-      const userReply = event.body.trim().toLowerCase();
-      
-      if (event.senderID !== Reply.author) {
-        return;
-      }
-      
-      if (userReply !== 'yes') {
-        global.ST.onReply.delete(Reply.messageID);
-        return message.reply('❌ Update cancelled.');
-      }
-      
-      await message.reply('🔄 Starting update process...\nPlease wait, this may take a moment.');
-      
-      const { execSync } = require('child_process');
-      
-      try {
-        execSync('node updater.js', { stdio: 'inherit', cwd: process.cwd() });
-        await message.reply('✅ Update completed successfully!\n🔄 Please restart the bot to apply changes.');
-      } catch (error) {
-        await message.reply(`❌ Update failed: ${error.message}\n\nYou can try manually running: node updater.js`);
-      }
-      
-      global.ST.onReply.delete(Reply.messageID);
-      
-    } catch (error) {
-      console.error('Update onReply error:', error);
-      await message.reply(`❌ Error during update: ${error.message}`);
+        try {
+            // Reacción de "procesando"
+            await sock.sendMessage(from, { react: { text: '🕑', key: message.key } });
+
+            // Configurar Git local de forma segura
+            await execPromise('git config user.email "bot@host.com"');
+            await execPromise('git config user.name "HostBot"');
+            
+            // Buscar actualizaciones en GitHub
+            await execPromise('git fetch origin');
+
+            // Detectar la rama actual en la que está tu Termux
+            const { stdout: branch } = await execPromise('git rev-parse --abbrev-ref HEAD');
+            const currentBranch = branch.trim();
+
+            // Ver diferencias y quién hizo el cambio
+            const { stdout: diffStatus } = await execPromise(`git diff --name-status HEAD..origin/${currentBranch}`).catch(() => ({ stdout: '' }));
+            const { stdout: info } = await execPromise(`git log HEAD..origin/${currentBranch} --format="%an" -1`).catch(() => ({ stdout: 'Desconocido' }));
+
+            const lines = diffStatus.trim().split('\n').filter(line => line.trim() !== '');
+            const totalFiles = lines.length;
+
+            // Forzar la actualización descartando cambios locales que choquen
+            await execPromise(`git reset --hard origin/${currentBranch}`);
+
+            let changeList = lines.map(line => {
+                const [status, ...fileParts] = line.split(/\s+/)
+                const file = fileParts.join(' ')
+                switch (status) {
+                    case 'A': return `+ ${file}`;
+                    case 'M': return `• ${file}`;
+                    case 'D': return `- ${file}`;
+                    default: return `? ${file}`;
+                }
+            }).slice(0, 20).join('\n');
+
+            // Construir el mensaje de respuesta
+            let msg = `❀ *Actualización Exitosa*\n\n`;
+            msg += `亗 *Editor:* ${info.trim()}\n`;
+            msg += `✎ *Total Cambios:* ${totalFiles}\n\n`;
+
+            if (totalFiles > 0) {
+                msg += `ꕥ *Detalles de archivos:*\n\`\`\`${changeList}${totalFiles > 20 ? '\n...entre otros.' : ''}\`\`\`\n\n`;
+            } else {
+                msg += `> *El bot ya se encuentra en su última versión.*\n\n`;
+            }
+
+            msg += `> *Reiniciando el bot, por favor espere...*`;
+
+            // Enviar respuesta a WhatsApp
+            await sock.sendMessage(from, { text: msg }, { quoted: message });
+            await sock.sendMessage(from, { react: { text: '✅', key: message.key } });
+
+            console.log(`\x1b[36m[UPDATE]\x1b[0m Bot actualizado con éxito. Reiniciando proceso...`);
+
+            // Guardar chat de origen para que el bot avise al volver a encender
+            const filePath = path.join(process.cwd(), 'restart_flag.txt');
+            writeFileSync(filePath, from); 
+
+            // Apagar el proceso. (Requiere pm2 o un script de reinicio automático para volver a prender solo)
+            setTimeout(() => {
+                process.exit(0);
+            }, 3000);
+
+        } catch (error) {
+            console.error(error);
+            await sock.sendMessage(from, { react: { text: '❌', key: message.key } });
+            await sock.sendMessage(from, { text: `*⚠️ FALLO CRÍTICO EN UPDATE:* \n\n${error.message}` }, { quoted: message });
+        }
     }
-  }
 };
